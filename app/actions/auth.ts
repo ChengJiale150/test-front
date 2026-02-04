@@ -14,7 +14,7 @@ export async function login(key: string) {
 
   if (key === correctKey) {
     // Set cookie valid for 7 days
-    cookies().set('auth_session', 'valid', {
+    (await cookies()).set('auth_session', 'valid', {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         maxAge: 60 * 60 * 24 * 7,
@@ -28,7 +28,7 @@ export async function login(key: string) {
 }
 
 export async function checkAuth() {
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     const auth = cookieStore.get('auth_session');
     // Also check if LOGIN_KEY is set. If not set, maybe bypass auth? 
     // But user explicitly asked for verification. So we stick to auth check.
