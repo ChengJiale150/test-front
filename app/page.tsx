@@ -12,6 +12,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, BrainCircuit, ChevronDown, ChevronRight } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
+import { checkAuth } from '@/app/actions/auth';
+import LoginOverlay from '@/component/login-overlay';
 
 // --- Types ---
 
@@ -394,6 +396,16 @@ function ChatInterface({
 // --- Main Page Component ---
 
 export default function ChatPage() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  useEffect(() => {
+    checkAuth().then(res => {
+      setIsAuthenticated(res.isAuthenticated);
+      setIsAuthChecking(false);
+    });
+  }, []);
+
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [initialMessages, setInitialMessages] = useState<any[]>([]);
@@ -465,6 +477,18 @@ export default function ChatPage() {
         handleNewChat();
     }
   }, [loading, chats.length]);
+
+  if (isAuthChecking) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <Loader2 className="animate-spin text-blue-600" size={32} />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginOverlay onLogin={() => setIsAuthenticated(true)} />;
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">
