@@ -230,40 +230,11 @@ function ChatInterface({
 
       for (const part of parts) {
         const type = part?.type;
-        if (type !== 'tool-create_subagent' && type !== 'tool-plan_subagent_graph') continue;
+        if (type !== 'tool-plan_subagent_graph') continue;
 
         const toolCallId =
           part?.toolCallId || part?.toolInvocation?.toolCallId || part?.toolInvocation?.toolCallID || 'unknown';
         if (processedToolCallIds.current.has(toolCallId)) continue;
-
-        if (type === 'tool-create_subagent') {
-          const args = part?.args || part?.toolInvocation?.args || part?.input || part?.toolInvocation?.input;
-          const name = args?.name;
-          const system_prompt = args?.system_prompt;
-          if (typeof name !== 'string' || typeof system_prompt !== 'string') continue;
-
-          processedToolCallIds.current.add(toolCallId);
-          if (typeof name === 'string' && typeof system_prompt === 'string') {
-            setSubAgents(prev => {
-              const incoming = system_prompt.trim();
-              const existingIndex = prev.findIndex(a => a.name === name);
-              if (existingIndex >= 0) {
-                const current = (prev[existingIndex]?.system_prompt ?? '').trim();
-                if (!incoming || incoming === current) return prev;
-                const next = [...prev];
-                next[existingIndex] = { name, system_prompt };
-                void saveChatToApi({ id: chatId, subAgents: next });
-                onChatUpdate({ id: chatId, subAgents: next });
-                return next;
-              }
-
-              const next = [...prev, { name, system_prompt }];
-              void saveChatToApi({ id: chatId, subAgents: next });
-              onChatUpdate({ id: chatId, subAgents: next });
-              return next;
-            });
-          }
-        }
 
         if (type === 'tool-plan_subagent_graph') {
           const args = part?.args || part?.toolInvocation?.args || part?.input || part?.toolInvocation?.input;
