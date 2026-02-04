@@ -33,6 +33,31 @@ function buildFlow(graph: GraphNode[]) {
       // Center the nodes: (index - (count - 1) / 2) * spacing
       const x = (index - (count - 1) / 2) * 320;
       
+      // Determine styles based on status
+      const nodeStyle: Record<string, string | number> = {
+        width: 280,
+        borderRadius: 12,
+        padding: 12,
+        boxShadow: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
+        background: 'white',
+      };
+
+      let badgeClass = 'px-2 py-0.5 rounded-full text-[10px] font-medium border ';
+
+      if (g.status === 'completed') {
+        nodeStyle.border = '2px solid #22c55e'; // green-500
+        nodeStyle.background = '#f0fdf4'; // green-50
+        badgeClass += 'text-green-700 bg-green-100 border-green-200';
+      } else if (g.status === 'in_progress') {
+        nodeStyle.border = '2px solid #eab308'; // yellow-500
+        nodeStyle.background = '#fefce8'; // yellow-50
+        badgeClass += 'text-yellow-700 bg-yellow-100 border-yellow-200';
+      } else {
+        nodeStyle.border = '2px dashed #9ca3af'; // gray-400
+        nodeStyle.background = '#f9fafb'; // gray-50
+        badgeClass += 'text-gray-600 bg-gray-100 border-gray-200';
+      }
+
       nodes.push({
         id,
         position: { x, y: (step - 1) * 180 },
@@ -42,29 +67,14 @@ function buildFlow(graph: GraphNode[]) {
               <div className="font-semibold text-gray-900 mb-1">Step {g.step}: {g.agent}</div>
               <div className="text-gray-600 mb-2 line-clamp-3">{g.task}</div>
               <div className="flex items-center">
-                <span
-                  className={
-                    g.status === 'completed'
-                      ? 'text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full text-[10px] font-medium'
-                      : g.status === 'in_progress'
-                        ? 'text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full text-[10px] font-medium'
-                        : 'text-gray-600 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full text-[10px] font-medium'
-                  }
-                >
+                <span className={badgeClass}>
                   {g.status}
                 </span>
               </div>
             </div>
           ),
         },
-        style: {
-          width: 280,
-          borderRadius: 12,
-          border: '1px solid rgb(229 231 235)',
-          background: 'white',
-          padding: 12,
-          boxShadow: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
-        },
+        style: nodeStyle,
       });
     });
     stepToNodeIds.set(step, ids);
