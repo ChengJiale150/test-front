@@ -5,9 +5,8 @@ import { mutateChat } from '@/lib/chat-store';
 const SPECIAL_AGENT_NAME = '__self__';
 
 export const GraphNodeSchema = z.object({
-  agent: z.string().describe('Name of the agent created by create_subagent'),
-  task: z.string().describe('Brief task description for the agent to perform'),
-  step: z.number().int().describe('Step number in the task sequence (for ordering/parallelism)'),
+  task: z.string().describe('Unique description of the task. Acts as the identifier for the node.'),
+  dependencies: z.array(z.string()).describe('List of predecessor tasks that must be completed before this task starts'),
   status: z.enum(['in_progress', 'pending', 'completed']).describe('Status of the task'),
 });
 
@@ -51,64 +50,90 @@ export function createOrchestratorTools(chatId: string) {
     },
   });
 
-  const planSubagentGraphTool = tool({
-    description: 'Plan or update the subagent dependency graph. The graph defines the topology of sub-agents and their tasks.',
+  const planSubtaskGraphTool = tool({
+    description: 'Plan or update the subtask dependency graph. The graph defines the topology of tasks.',
     inputSchema: z.object({
       nodes: z.array(GraphNodeSchema),
     }),
     async execute({ nodes }) {
       if (!nodes || nodes.length === 0) {
         return mutateChat(chatId, chat => ({
-          result: 'Subagent Graph Cleared.',
+          result: 'Subtask Graph Cleared.',
           chat: { ...chat, graph: [] },
         }));
       }
 
       return mutateChat(chatId, chat => {
-        const agentNames = new Set((chat.subAgents ?? []).map(a => a.name));
-
+        // 1. Verify correctness
+        const nodeTasks = new Set<string>();
         for (const node of nodes) {
-          if (!agentNames.has(node.agent) && node.agent !== SPECIAL_AGENT_NAME) {
-            return { result: `Error: Agent '${node.agent}' does not exist. Please create it first.` };
-          }
-        }
-
-        const steps = Array.from(new Set(nodes.map(n => n.step))).sort((a, b) => a - b);
-        if (steps.length === 0) {
-          return { result: 'Error: No steps defined.' };
-        }
-
-        for (let i = 0; i < steps.length - 1; i++) {
-          if (steps[i + 1] !== steps[i] + 1) {
-            return { result: `Error: Steps are not continuous. Missing step between ${steps[i]} and ${steps[i + 1]}.` };
-          }
-        }
-
-        for (const node of nodes) {
-          if (node.status === 'in_progress') {
-            const currentStep = node.step;
-            const prevStepIndex = steps.indexOf(currentStep) - 1;
-            if (prevStepIndex < 0) continue;
-
-            const prevStep = steps[prevStepIndex];
-            const prevNodes = nodes.filter(n => n.step === prevStep);
-            for (const prevNode of prevNodes) {
-              if (prevNode.status !== 'completed') {
-                return {
-                  result: `Error: Cannot start step ${currentStep} (Agent '${node.agent}') because previous step ${prevStep} (Agent '${prevNode.agent}') is not completed.`,
-                };
-              }
+            if (nodeTasks.has(node.task)) {
+                return { result: `Error: Duplicate task '${node.task}' found.` };
             }
-          }
+            nodeTasks.add(node.task);
         }
 
-        return { result: 'Subagent Graph Updated!', chat: { ...chat, graph: nodes } };
+        // Check dependencies
+        const nodeMap = new Map(nodes.map(n => [n.task, n]));
+        for (const node of nodes) {
+            for (const depTask of node.dependencies) {
+                if (!nodeMap.has(depTask)) {
+                    return { result: `Error: Task '${node.task}' depends on non-existent task '${depTask}'.` };
+                }
+                if (depTask === node.task) {
+                    return { result: `Error: Task '${node.task}' cannot depend on itself.` };
+                }
+            }
+        }
+
+        // Check for status consistency
+        for (const node of nodes) {
+            if (node.status === 'in_progress') {
+                for (const depTask of node.dependencies) {
+                    const depNode = nodeMap.get(depTask);
+                    if (depNode?.status !== 'completed') {
+                         return { result: `Error: Cannot start task '${node.task}' because dependency '${depTask}' is not completed.` };
+                    }
+                }
+            }
+        }
+
+        return { result: 'Subtask Graph Updated!', chat: { ...chat, graph: nodes } };
       });
     },
   });
 
+  const assignTaskTool = tool({
+    description: 'Launch a new agent to execute a specific task from the plan.',
+    inputSchema: z.object({
+      agent: z.string().describe('Specify which created agent to use'),
+      task: z.string().describe('The task name from the plan to execute'),
+      prompt: z.string().describe('The detailed instructions for the agent to perform the task'),
+    }),
+    async execute({ agent, task, prompt }) {
+      return mutateChat(chatId, chat => {
+          const graph = chat.graph || [];
+          const taskNode = graph.find(n => n.task === task);
+          if (!taskNode) {
+              return { result: `Error: Task '${task}' not found in the planned graph. Please plan the task first.` };
+          }
+
+          const subAgents = chat.subAgents || [];
+          const agentConfig = subAgents.find(a => a.name === agent);
+          if (!agentConfig && agent !== SPECIAL_AGENT_NAME) {
+               const available = subAgents.map(a => a.name);
+               return { result: `Error: Agent '${agent}' not found. Available agents: ${available}` };
+          }
+
+          // Fixed mock result as requested
+          return { result: `[Mock Result] Task **${task}** executed by agent *${agent}* successfully.` };
+      });
+    }
+  });
+
   return {
     create_subagent: createSubAgentTool,
-    plan_subagent_graph: planSubagentGraphTool,
+    plan_subtask_graph: planSubtaskGraphTool,
+    assign_task: assignTaskTool,
   };
 }

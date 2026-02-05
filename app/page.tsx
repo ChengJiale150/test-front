@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, BrainCircuit, ChevronDown, ChevronRight } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { checkAuth } from '@/app/actions/auth';
 import LoginOverlay from '@/component/login-overlay';
 
@@ -57,8 +58,14 @@ async function deleteChatFromApi(id: string) {
 
 // --- Components ---
 
-function ThinkingBlock({ content }: { content: string }) {
+function ThinkingBlock({ content, isComplete }: { content: string, isComplete?: boolean }) {
   const [isOpen, setIsOpen] = useState(true);
+
+  useEffect(() => {
+      if (isComplete) {
+          setIsOpen(false);
+      }
+  }, [isComplete]);
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden my-2 bg-gray-50">
@@ -197,7 +204,7 @@ function ChatInterface({
         setGraph(prev => {
           if (prev.length === nextGraph.length && prev.every((n, i) => {
             const m = nextGraph[i];
-            return m && n.agent === m.agent && n.task === m.task && n.step === m.step && n.status === m.status;
+            return m && n.task === m.task && n.status === m.status && JSON.stringify(n.dependencies) === JSON.stringify(m.dependencies);
           })) {
             return prev;
           }
@@ -230,13 +237,13 @@ function ChatInterface({
 
       for (const part of parts) {
         const type = part?.type;
-        if (type !== 'tool-plan_subagent_graph') continue;
+        if (type !== 'tool-plan_subtask_graph') continue;
 
         const toolCallId =
           part?.toolCallId || part?.toolInvocation?.toolCallId || part?.toolInvocation?.toolCallID || 'unknown';
         if (processedToolCallIds.current.has(toolCallId)) continue;
 
-        if (type === 'tool-plan_subagent_graph') {
+        if (type === 'tool-plan_subtask_graph') {
           const args = part?.args || part?.toolInvocation?.args || part?.input || part?.toolInvocation?.input;
           const nodes = args?.nodes;
           if (!Array.isArray(nodes)) continue;
@@ -270,10 +277,10 @@ function ChatInterface({
                   <div className={`
                       px-4 py-3 rounded-2xl max-w-[90%] lg:max-w-[80%]
                       ${message.role === 'user' 
-                          ? 'bg-blue-600 text-white rounded-br-none' 
+                          ? 'bg-gray-100 text-gray-800 rounded-br-none' 
                           : 'bg-white border border-gray-200 text-gray-800 rounded-bl-none shadow-sm'}
                   `}>
-                  <div className={`font-bold text-xs mb-1 ${message.role === 'user' ? 'text-blue-100' : 'text-gray-400'}`}>
+                  <div className={`font-bold text-xs mb-1 ${message.role === 'user' ? 'text-gray-500' : 'text-gray-400'}`}>
                       {message.role === 'user' ? 'You' : 'Agent'}
                   </div>
                   
@@ -283,12 +290,12 @@ function ChatInterface({
                           case 'text':
                               return (
                                   <div key={index} className="prose prose-sm max-w-none dark:prose-invert">
-                                      <ReactMarkdown>{part.text}</ReactMarkdown>
+                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
                                   </div>
                               );
 
                           case 'reasoning': 
-                              return <ThinkingBlock key={index} content={part.text} />;
+                              return <ThinkingBlock key={index} content={part.text} isComplete={status !== 'streaming' || index < (message.parts?.length ?? 0) - 1 || messages.indexOf(message) < messages.length - 1} />;
 
                           case 'step-start':
                               return (
@@ -309,10 +316,21 @@ function ChatInterface({
                                }} />;
                           }
 
-                          case 'tool-plan_subagent_graph': {
+                          case 'tool-plan_subtask_graph': {
                                const p = part as any;
                                return <ToolView key={index} invocation={{ 
-                                   toolName: 'plan_subagent_graph', 
+                                   toolName: 'plan_subtask_graph', 
+                                 args: p.args || p.toolInvocation?.args || p.input || p.toolInvocation?.input, 
+                                 result: p.result || p.toolInvocation?.result || p.output || p.toolInvocation?.output,
+                                   state: 'result',
+                                   toolCallId: p.toolCallId || p.toolInvocation?.toolCallId || 'unknown'
+                               }} />;
+                          }
+
+                          case 'tool-assign_task': {
+                               const p = part as any;
+                               return <ToolView key={index} invocation={{ 
+                                   toolName: 'assign_task', 
                                  args: p.args || p.toolInvocation?.args || p.input || p.toolInvocation?.input, 
                                  result: p.result || p.toolInvocation?.result || p.output || p.toolInvocation?.output,
                                    state: 'result',
@@ -326,7 +344,7 @@ function ChatInterface({
                       })}
                       {!message.parts && (message as any).content && (
                           <div className="prose prose-sm max-w-none dark:prose-invert">
-                               <ReactMarkdown>{(message as any).content}</ReactMarkdown>
+                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{(message as any).content}</ReactMarkdown>
                           </div>
                       )}
                   </div>

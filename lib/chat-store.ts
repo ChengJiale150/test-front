@@ -4,9 +4,8 @@ import path from 'path';
 export type GraphNodeStatus = 'in_progress' | 'pending' | 'completed';
 
 export interface GraphNode {
-  agent: string;
   task: string;
-  step: number;
+  dependencies: string[];
   status: GraphNodeStatus;
 }
 

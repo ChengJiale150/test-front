@@ -5,30 +5,58 @@ import { Background, Controls, ReactFlow, type Edge, type Node } from '@xyflow/r
 import { useMemo } from 'react';
 
 function buildFlow(graph: GraphNode[]) {
-  const byStep = new Map<number, GraphNode[]>();
-  for (const item of graph) {
-    const stepNum = Number(item.step);
-    if (isNaN(stepNum)) continue;
+  // 1. Calculate levels based on dependencies
+  const taskLevels = new Map<string, number>();
+  const taskToNode = new Map(graph.map(n => [n.task, n]));
+
+  function getLevel(task: string, visited = new Set<string>()): number {
+    if (taskLevels.has(task)) return taskLevels.get(task)!;
+    if (visited.has(task)) return 0; // Cycle detected
     
-    const list = byStep.get(stepNum) ?? [];
-    list.push(item);
-    byStep.set(stepNum, list);
+    visited.add(task);
+    const node = taskToNode.get(task);
+    if (!node || !node.dependencies || node.dependencies.length === 0) {
+      taskLevels.set(task, 1);
+      return 1;
+    }
+
+    let maxDepLevel = 0;
+    for (const dep of node.dependencies) {
+      maxDepLevel = Math.max(maxDepLevel, getLevel(dep, visited));
+    }
+    
+    const level = maxDepLevel + 1;
+    taskLevels.set(task, level);
+    return level;
   }
 
-  const steps = Array.from(byStep.keys()).sort((a, b) => a - b);
+  graph.forEach(n => getLevel(n.task));
+
+  // 2. Group by level
+  const byLevel = new Map<number, GraphNode[]>();
+  taskLevels.forEach((level, task) => {
+    const list = byLevel.get(level) ?? [];
+    const node = taskToNode.get(task);
+    if (node) {
+      list.push(node);
+      byLevel.set(level, list);
+    }
+  });
+
+  const levels = Array.from(byLevel.keys()).sort((a, b) => a - b);
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  const stepToNodeIds = new Map<number, string[]>();
+  const taskToNodeId = new Map<string, string>();
 
-  for (const step of steps) {
-    const list = byStep.get(step) ?? [];
-    const ids: string[] = [];
+  for (const level of levels) {
+    const list = byLevel.get(level) ?? [];
     const count = list.length;
     
     list.forEach((g, index) => {
-      const id = `${step}:${g.agent}:${index}`;
-      ids.push(id);
+      // Use index in level to create unique ID, but we need to map task to ID for edges
+      const id = `${level}:${index}`; 
+      taskToNodeId.set(g.task, id);
       
       // Center the nodes: (index - (count - 1) / 2) * spacing
       const x = (index - (count - 1) / 2) * 320;
@@ -60,11 +88,11 @@ function buildFlow(graph: GraphNode[]) {
 
       nodes.push({
         id,
-        position: { x, y: (step - 1) * 180 },
+        position: { x, y: (level - 1) * 180 },
         data: {
           label: (
             <div className="text-xs leading-4">
-              <div className="font-semibold text-gray-900 mb-1">Step {g.step}: {g.agent}</div>
+              <div className="font-semibold text-gray-900 mb-1">Level {level}</div>
               <div className="text-gray-600 mb-2 line-clamp-3">{g.task}</div>
               <div className="flex items-center">
                 <span className={badgeClass}>
@@ -77,26 +105,28 @@ function buildFlow(graph: GraphNode[]) {
         style: nodeStyle,
       });
     });
-    stepToNodeIds.set(step, ids);
   }
 
-  for (let i = 0; i < steps.length - 1; i++) {
-    const fromStep = steps[i];
-    const toStep = steps[i + 1];
-    const fromIds = stepToNodeIds.get(fromStep) ?? [];
-    const toIds = stepToNodeIds.get(toStep) ?? [];
-    for (const from of fromIds) {
-      for (const to of toIds) {
-        edges.push({
-          id: `${from}->${to}`,
-          source: from,
-          target: to,
-          markerEnd: { type: 'arrowclosed' },
-          type: 'smoothstep',
-        });
-      }
+  // Create edges
+  graph.forEach(node => {
+    const targetId = taskToNodeId.get(node.task);
+    if (!targetId) return;
+
+    if (node.dependencies) {
+      node.dependencies.forEach(depTask => {
+        const sourceId = taskToNodeId.get(depTask);
+        if (sourceId) {
+          edges.push({
+            id: `${sourceId}->${targetId}`,
+            source: sourceId,
+            target: targetId,
+            markerEnd: { type: 'arrowclosed' },
+            type: 'smoothstep',
+          });
+        }
+      });
     }
-  }
+  });
 
   return { nodes, edges };
 }
@@ -107,7 +137,7 @@ export default function GraphPanel({ graph }: { graph: GraphNode[] }) {
   return (
     <div className="h-[520px] w-full bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div className="px-4 py-2 border-b border-gray-100 text-sm font-semibold text-gray-800">
-        子Agent逻辑图
+        子Task逻辑图
       </div>
       {nodes.length === 0 ? (
         <div className="h-[calc(520px-41px)] flex items-center justify-center text-sm text-gray-400">
