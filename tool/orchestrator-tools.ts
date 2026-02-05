@@ -55,6 +55,8 @@ export function createOrchestratorTools(chatId: string) {
     inputSchema: z.object({
       nodes: z.array(GraphNodeSchema),
     }),
+    needsApproval: (_input, { experimental_context }) =>
+      !Boolean((experimental_context as { autoApprove?: boolean } | undefined)?.autoApprove),
     async execute({ nodes }) {
       if (!nodes || nodes.length === 0) {
         return mutateChat(chatId, chat => ({

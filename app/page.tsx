@@ -102,7 +102,8 @@ function ChatInterface({
   initialSubAgents: SubAgentRecord[];
   onChatUpdate: (chat: any) => void;
 }) {
-  const { status, sendMessage, messages, stop, setMessages } = useChat<OrchestratorAgentUIMessage>({
+  const { status, sendMessage, messages, stop, setMessages, addToolApprovalResponse } =
+    useChat<OrchestratorAgentUIMessage>({
     id: chatId,
   });
 
@@ -112,6 +113,7 @@ function ChatInterface({
 
   const [graph, setGraph] = useState<GraphNode[]>(initialGraph ?? []);
   const [subAgents, setSubAgents] = useState<SubAgentRecord[]>(initialSubAgents ?? []);
+  const [autoApproveAfter, setAutoApproveAfter] = useState(false);
 
   useEffect(() => {
     setGraph(initialGraph ?? []);
@@ -167,26 +169,57 @@ function ChatInterface({
   }, [chatId, initialMessages, onChatUpdate]);
 
   const processedToolCallIds = useRef<Set<string>>(new Set());
+  const processedApprovalIds = useRef<Set<string>>(new Set());
+  const prevStatusRef = useRef(status);
 
-  const [prevStatus, setPrevStatus] = useState(status);
+  const submitApproval = useCallback(
+    (approvalId: string, approved: boolean, reason?: string, enableAutoApprove?: boolean) => {
+      addToolApprovalResponse({ id: approvalId, approved, reason });
+      const nextAutoApprove = Boolean(enableAutoApprove) || autoApproveAfter;
+      if (enableAutoApprove) {
+        setAutoApproveAfter(true);
+      }
+      void sendMessage(undefined, { body: { id: chatId, autoApprove: nextAutoApprove } });
+    },
+    [addToolApprovalResponse, autoApproveAfter, chatId, sendMessage],
+  );
 
   useEffect(() => {
-    // Auto-save when status changes to ready (meaning streaming finished)
-    if (prevStatus !== 'ready' && status === 'ready' && messages.length > 0) {
-        const save = async () => {
-            const title = (messages[0] as any)?.content?.slice(0, 30) || 'New Chat';
-            const chatData = {
-                id: chatId,
-                title,
-                messages,
-            };
-            await saveChatToApi(chatData);
-            onChatUpdate(chatData);
-        };
-        save();
+    if (!autoApproveAfter) return;
+
+    for (const message of messages) {
+      const parts = (message as any)?.parts;
+      if (!Array.isArray(parts)) continue;
+
+      for (const part of parts) {
+        if (!part || typeof part !== 'object') continue;
+        const approvalId = (part as any)?.approval?.id || (part as any)?.toolInvocation?.approval?.id;
+        const partState = (part as any)?.state || (part as any)?.toolInvocation?.state;
+        if (partState !== 'approval-requested' || !approvalId) continue;
+        if (processedApprovalIds.current.has(approvalId)) continue;
+
+        processedApprovalIds.current.add(approvalId);
+        submitApproval(approvalId, true);
+      }
     }
-    setPrevStatus(status);
-  }, [status, messages, chatId, onChatUpdate, prevStatus, graph, subAgents]);
+  }, [autoApproveAfter, messages, submitApproval]);
+
+  useEffect(() => {
+    if (prevStatusRef.current !== 'ready' && status === 'ready' && messages.length > 0) {
+      const save = async () => {
+        const title = (messages[0] as any)?.content?.slice(0, 30) || 'New Chat';
+        const chatData = {
+          id: chatId,
+          title,
+          messages,
+        };
+        await saveChatToApi(chatData);
+        onChatUpdate(chatData);
+      };
+      save();
+    }
+    prevStatusRef.current = status;
+  }, [status, messages, chatId, onChatUpdate]);
 
   useEffect(() => {
     if (!chatId) return;
@@ -236,7 +269,8 @@ function ChatInterface({
       if (!Array.isArray(parts)) continue;
 
       for (const part of parts) {
-        const type = part?.type;
+        if (!part || typeof part !== 'object') continue;
+        const type = (part as any)?.type;
         if (type !== 'tool-plan_subtask_graph') continue;
 
         const toolCallId =
@@ -249,11 +283,10 @@ function ChatInterface({
           if (!Array.isArray(nodes)) continue;
 
           processedToolCallIds.current.add(toolCallId);
-          setGraph(() => {
-            void saveChatToApi({ id: chatId, graph: nodes as GraphNode[] });
-            onChatUpdate({ id: chatId, graph: nodes as GraphNode[] });
-            return nodes as GraphNode[];
-          });
+          const nextGraph = nodes as GraphNode[];
+          setGraph(nextGraph);
+          void saveChatToApi({ id: chatId, graph: nextGraph });
+          onChatUpdate({ id: chatId, graph: nextGraph });
         }
       }
     }
@@ -284,18 +317,29 @@ function ChatInterface({
                       {message.role === 'user' ? 'You' : 'Agent'}
                   </div>
                   
-                  <div className="space-y-2 overflow-hidden">
+            <div className="space-y-2 overflow-hidden">
                       {message.parts?.map((part, index) => {
-                          switch (part.type) {
+                          if (!part || typeof part !== 'object') return null;
+                          const partType = (part as any).type;
+                          if (!partType) return null;
+                          switch (partType) {
                           case 'text':
+                              {
+                                const text = (part as { text?: string }).text;
+                                if (typeof text !== 'string') return null;
                               return (
                                   <div key={index} className="prose prose-sm max-w-none dark:prose-invert">
-                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
+                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
                                   </div>
                               );
+                            }
 
                           case 'reasoning': 
-                              return <ThinkingBlock key={index} content={part.text} isComplete={status !== 'streaming' || index < (message.parts?.length ?? 0) - 1 || messages.indexOf(message) < messages.length - 1} />;
+                              {
+                                const text = (part as { text?: string }).text;
+                                if (typeof text !== 'string') return null;
+                                return <ThinkingBlock key={index} content={text} isComplete={status !== 'streaming' || index < (message.parts?.length ?? 0) - 1 || messages.indexOf(message) < messages.length - 1} />;
+                              }
 
                           case 'step-start':
                               return (
@@ -322,9 +366,14 @@ function ChatInterface({
                                    toolName: 'plan_subtask_graph', 
                                  args: p.args || p.toolInvocation?.args || p.input || p.toolInvocation?.input, 
                                  result: p.result || p.toolInvocation?.result || p.output || p.toolInvocation?.output,
-                                   state: 'result',
-                                   toolCallId: p.toolCallId || p.toolInvocation?.toolCallId || 'unknown'
-                               }} />;
+                                   state: p.state || p.toolInvocation?.state,
+                                   toolCallId: p.toolCallId || p.toolInvocation?.toolCallId || 'unknown',
+                                   approval: p.approval || p.toolInvocation?.approval
+                               }}
+                               onApprove={id => submitApproval(id, true)}
+                               onReject={(id, reason) => submitApproval(id, false, reason)}
+                               onAutoApproveAfter={id => submitApproval(id, true, undefined, true)}
+                               />;
                           }
 
                           case 'tool-assign_task': {
@@ -365,7 +414,9 @@ function ChatInterface({
           <div className="w-full max-w-3xl mx-auto px-4 py-4">
             <ChatInput
               status={status}
-              onSubmit={text => sendMessage({ text }, { body: { id: chatId } })}
+              onSubmit={text =>
+                sendMessage({ text }, { body: { id: chatId, autoApprove: autoApproveAfter } })
+              }
               stop={stop}
             />
           </div>
@@ -402,15 +453,15 @@ export default function ChatPage() {
   const [initialSubAgents, setInitialSubAgents] = useState<SubAgentRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadChats();
-  }, []);
-
-  const loadChats = async () => {
+  const loadChats = useCallback(async () => {
     const data = await fetchChats();
     setChats(data);
     setLoading(false);
-  };
+  }, []);
+
+  useEffect(() => {
+    loadChats();
+  }, [loadChats]);
 
   const handleSelectChat = async (id: string) => {
     // If selecting same chat, do nothing (optional optimization)
@@ -458,14 +509,19 @@ export default function ChatPage() {
   };
 
   const handleChatUpdate = useCallback(async (updatedChat: any) => {
+      if (updatedChat?.id) {
+        setChats(prev =>
+          prev.map(c => (c.id === updatedChat.id ? { ...c, ...updatedChat } : c)),
+        );
+      }
       await loadChats();
-  }, []);
+  }, [loadChats]);
 
   useEffect(() => {
     if (!loading && !currentChatId && chats.length === 0) {
         handleNewChat();
     }
-  }, [loading, chats.length]);
+  }, [loading, chats.length, currentChatId]);
 
   if (isAuthChecking) {
     return (

@@ -66,10 +66,16 @@ export const orchestratorAgent = new ToolLoopAgent({
 
 export type OrchestratorAgentUIMessage = InferAgentUIMessage<typeof orchestratorAgent>;
 
-export function createOrchestratorAgent(chatId: string) {
+export function createOrchestratorAgent(
+  chatId: string,
+  options?: { autoApprove?: boolean },
+) {
   return new ToolLoopAgent({
     model: kimiClient(process.env.OPENAI_MODEL ?? 'kimi-k2.5'),
     instructions: SYSTEM_PROMPT,
     tools: createOrchestratorTools(chatId),
+    experimental_context: {
+      autoApprove: options?.autoApprove,
+    },
   });
 }

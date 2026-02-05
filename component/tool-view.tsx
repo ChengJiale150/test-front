@@ -40,13 +40,43 @@ interface ToolInvocation {
   toolName: string;
   args: any;
   result?: any;
-  state?: 'result' | 'partial-call' | 'call';
+  state?:
+    | 'result'
+    | 'partial-call'
+    | 'call'
+    | 'input-available'
+    | 'output-available'
+    | 'output-error'
+    | 'output-denied'
+    | 'approval-requested'
+    | 'approval-responded';
+  approval?: {
+    id: string;
+    approved?: boolean;
+    reason?: string;
+  };
 }
 
-export default function ToolView({ invocation }: { invocation: ToolInvocation }) {
-  const { toolName, args, result, state } = invocation;
-  const isComplete = state === 'result';
+export default function ToolView({
+  invocation,
+  onApprove,
+  onReject,
+  onAutoApproveAfter,
+}: {
+  invocation: ToolInvocation;
+  onApprove?: (approvalId: string) => void;
+  onReject?: (approvalId: string, reason: string) => void;
+  onAutoApproveAfter?: (approvalId: string) => void;
+}) {
+  const { toolName, args, result, state, approval } = invocation;
+  const isComplete =
+    state === 'result' ||
+    state === 'output-available' ||
+    state === 'output-error' ||
+    state === 'output-denied';
   const [isExpanded, setIsExpanded] = useState(!isComplete);
+  const [showRejectInput, setShowRejectInput] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
 
   // Auto-collapse when complete
   useEffect(() => {
@@ -54,6 +84,13 @@ export default function ToolView({ invocation }: { invocation: ToolInvocation })
       setIsExpanded(false);
     }
   }, [isComplete]);
+
+  useEffect(() => {
+    if (state !== 'approval-requested') {
+      setShowRejectInput(false);
+      setRejectReason('');
+    }
+  }, [state]);
 
   if (!args) {
     return (
@@ -136,6 +173,65 @@ export default function ToolView({ invocation }: { invocation: ToolInvocation })
         <div className="bg-white p-2 rounded border border-emerald-50">
             <Mermaid chart={chart} />
         </div>
+        {state === 'approval-requested' && approval?.id && (
+          <div className="mt-3 rounded-lg border border-emerald-100 bg-white p-3 text-xs text-emerald-700">
+            <div className="font-medium mb-2">Need Human Approval</div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => onApprove?.(approval.id)}
+                className="px-3 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => setShowRejectInput(true)}
+                className="px-3 py-1 rounded-md bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors"
+              >
+                Reject
+              </button>
+              <button
+                onClick={() => onAutoApproveAfter?.(approval.id)}
+                className="px-3 py-1 rounded-md bg-gray-50 text-gray-700 border border-gray-200 hover:bg-gray-100 transition-colors"
+              >
+                Auto Approve After
+              </button>
+            </div>
+            {showRejectInput && (
+              <div className="mt-3">
+                <div className="text-gray-600 mb-2">Please provide a reason for rejecting the task:</div>
+                <textarea
+                  value={rejectReason}
+                  onChange={e => setRejectReason(e.target.value)}
+                  className="w-full rounded-md border border-gray-200 p-2 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  rows={3}
+                  placeholder="e.g. Merge similar tasks, reduce hierarchy, sort by priority"
+                />
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (!rejectReason.trim()) return;
+                      onReject?.(approval.id, rejectReason.trim());
+                      setShowRejectInput(false);
+                      setRejectReason('');
+                    }}
+                    className="px-3 py-1 rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors"
+                  >
+                    Reject Task
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowRejectInput(false);
+                      setRejectReason('');
+                    }}
+                    className="px-3 py-1 rounded-md text-gray-600 hover:text-gray-800"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         {/* Tool output hidden as requested */}
       </div>
     );
